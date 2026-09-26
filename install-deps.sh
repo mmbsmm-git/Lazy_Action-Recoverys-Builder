@@ -28,9 +28,11 @@ apt-get update -y
 # ---- CORE (must all succeed) ----
 echo "== Installing CORE packages =="
 CORE_PKGS="
-git aria2 python2.7 python-is-python2 python3
+git aria2 python2.7 python-is-python2 python3 rsync
 libncurses5 libtinfo5
 build-essential flex bison gperf zip curl zlib1g-dev ca-certificates
+gnupg m4 bc cpio lz4 liblz4-tool xz-utils lzop
+imagemagick pngcrush schedtool squashfs-tools ccache
 "
 for p in $CORE_PKGS; do install_one "$p" core; done
 
@@ -39,7 +41,7 @@ echo "== Installing OPTIONAL packages =="
 OPT_PKGS="
 lib32ncurses-dev libc6-dev-i386 lib32z1 lib32z1-dev lib32stdc++6 lib32readline-dev
 gcc-multilib g++-multilib
-x11proto-core-dev libx11-dev libgl1-mesa-dev libxml2-utils xsltproc unzip
+x11proto-core-dev libx11-dev libgl1-mesa-dev libxml2-utils xsltproc unzip fontconfig
 "
 for p in $OPT_PKGS; do install_one "$p" opt; done
 
