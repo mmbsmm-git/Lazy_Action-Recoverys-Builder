@@ -106,7 +106,24 @@ jobs:
         swap-size-gb: 12
         
     - name: install py-is-py2
-      run: sudo apt-get install python-is-python2
+      run: |
+        set +e
+        # Preferred: apt works on ubuntu-20.04 (has python-is-python2)
+        sudo apt-get update -y
+        sudo apt-get install -y python-is-python2 python2 python2.7
+        if ! python --version 2>/dev/null | grep -q "Python 2"; then
+          echo "apt python2 not available, installing manually from Ubuntu focal pool..."
+          cd /tmp
+          BASE="http://archive.ubuntu.com/ubuntu/pool/universe"
+          curl -fsSLO "${BASE}/p/python2.7/libpython2.7-minimal_2.7.18-1~20.04.6_amd64.deb"
+          curl -fsSLO "${BASE}/p/python2.7/libpython2.7-stdlib_2.7.18-1~20.04.6_amd64.deb"
+          curl -fsSLO "${BASE}/p/python2.7/python2.7-minimal_2.7.18-1~20.04.6_amd64.deb"
+          curl -fsSLO "${BASE}/p/python2.7/python2.7_2.7.18-1~20.04.6_amd64.deb"
+          sudo dpkg -i libpython2.7-minimal*.deb libpython2.7-stdlib*.deb python2.7-minimal*.deb python2.7_*.deb || sudo apt-get -f install -y
+          sudo ln -sf /usr/bin/python2.7 /usr/bin/python
+        fi
+        set -e
+        python --version
 
     - name: Building recovery
       run: |
