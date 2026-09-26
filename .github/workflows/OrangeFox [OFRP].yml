@@ -107,7 +107,7 @@ jobs:
       with:
         swap-size-gb: 12
         
-    - name: install py-is-py2 and libtinfo5
+    - name: install py-is-py2 and legacy libs (libtinfo5+libncurses5)
       run: |
         set -e
         # Install python2 via micromamba (works on ubuntu-24.04, which has NO python2 in apt).
@@ -118,15 +118,23 @@ jobs:
         sudo ln -sf "$HOME/mamba/envs/py2/bin/python2.7" /usr/local/bin/python
         sudo ln -sf "$HOME/mamba/envs/py2/bin/python2" /usr/local/bin/python2
         python --version
-        # Android 9 old clang (clang-4691093) needs libtinfo.so.5 which is absent on 24.04.
+        # Android 9 toolchain (old clang + header-abi-dumper) needs libtinfo.so.5 and
+        # libncurses.so.5, both absent on 24.04. Download the jammy debs manually.
         sudo apt-get update -y || true
         cd /tmp
+        # libtinfo5
         curl -fsSLO "http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2_amd64.deb" || \
         curl -fsSLO "http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2_amd64.deb" || true
         if ls libtinfo5*.deb >/dev/null 2>&1; then
           sudo dpkg -i libtinfo5*.deb || sudo apt-get -f install -y
         fi
-        ls -la /lib/x86_64-linux-gnu/libtinfo* 2>/dev/null || true
+        # libncurses5
+        curl -fsSLO "http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libncurses5_6.3-2ubuntu0.3_amd64.deb" || \
+        curl -fsSLO "http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libncurses5_6.3-2ubuntu0.3_amd64.deb" || true
+        if ls libncurses5*.deb >/dev/null 2>&1; then
+          sudo dpkg -i libncurses5*.deb || sudo apt-get -f install -y
+        fi
+        ls -la /lib/x86_64-linux-gnu/libtinfo* /lib/x86_64-linux-gnu/libncurses* 2>/dev/null || true
 
     - name: Building recovery
       run: |
