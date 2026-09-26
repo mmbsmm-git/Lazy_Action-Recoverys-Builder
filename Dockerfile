@@ -23,6 +23,13 @@ RUN apt-get update -y && apt-get install -y \
     x11proto-core-dev libx11-dev libgl1-mesa-dev libxml2-utils xsltproc unzip \
     || true
 
+# repo tool: Android source sync needs the `repo` command (not an apt package).
+# Install Google's repo launcher script. Must succeed (repo is required by sync).
+RUN curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o /usr/local/bin/repo && \
+    chmod a+x /usr/local/bin/repo && \
+    head -1 /usr/local/bin/repo && \
+    repo --version
+
 # sanity check
 RUN python2 --version && \
     ldconfig -p | grep -E 'lib(tinfo|ncurses)5\.so' | head
