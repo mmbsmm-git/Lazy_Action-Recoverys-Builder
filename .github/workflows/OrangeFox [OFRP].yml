@@ -43,11 +43,19 @@ on:
         description: 'BUILD_TARGET'
         required: true
         default: 'recovery'
+      UBUNTU_VERSION:
+        description: 'Runner OS version (20 or 24)'
+        required: true
+        default: '24'
+        type: choice
+        options:
+          - '20'
+          - '24'
 
 jobs:
   build:
     if: github.event.repository.owner.id == github.event.sender.id
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-${{ github.event.inputs.UBUNTU_VERSION }}.04
     permissions:
       contents: write
     steps:
@@ -107,35 +115,57 @@ jobs:
       with:
         swap-size-gb: 12
         
-    - name: install py-is-py2 and legacy libs (libtinfo5+libncurses5)
+    - name: install Python2 + Android 9 legacy deps (branch by OS version)
       run: |
         set -e
-        # Install python2 via micromamba (works on ubuntu-24.04, which has NO python2 in apt).
-        curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C "$HOME" bin/micromamba
-        export MAMBA_ROOT_PREFIX="$HOME/mamba"
-        "$HOME/bin/micromamba" create -y -p "$HOME/mamba/envs/py2" -c conda-forge python=2.7
-        # Make `python` point to the conda python2.7
-        sudo ln -sf "$HOME/mamba/envs/py2/bin/python2.7" /usr/local/bin/python
-        sudo ln -sf "$HOME/mamba/envs/py2/bin/python2" /usr/local/bin/python2
-        python --version
-        # Android 9 toolchain (old clang + header-abi-dumper) needs libtinfo.so.5 and
-        # libncurses.so.5, both absent on 24.04. Download the jammy debs manually.
-        sudo apt-get update -y || true
-        cd /tmp
-        # libtinfo5
-        curl -fsSLO "http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2_amd64.deb" || \
-        curl -fsSLO "http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2_amd64.deb" || true
-        if ls libtinfo5*.deb >/dev/null 2>&1; then
-          sudo dpkg -i libtinfo5*.deb || sudo apt-get -f install -y
-        fi
-        # libncurses5
-        curl -fsSLO "http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libncurses5_6.3-2ubuntu0.3_amd64.deb" || \
-        curl -fsSLO "http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libncurses5_6.3-2ubuntu0.3_amd64.deb" || true
-        if ls libncurses5*.deb >/dev/null 2>&1; then
-          sudo dpkg -i libncurses5*.deb || sudo apt-get -f install -y
-        fi
-        ls -la /lib/x86_64-linux-gnu/libtinfo* /lib/x86_64-linux-gnu/libncurses* 2>/dev/null || true
+        UBUNTU="${{ github.event.inputs.UBUNTU_VERSION }}"
+        echo "== Building on Ubuntu $UBUNTU.04 =="
 
+        if [ "$UBUNTU" = "20" ]; then
+          # ---- Ubuntu 20.04: has python2 and libncurses5/libtinfo5 in apt natively ----
+          sudo apt-get update -y
+          sudo apt-get install -y python-is-python2 || sudo apt-get install -y python2
+          python --version || python2 --version
+          # Android 9 build deps incl. legacy 32-bit + ncurses5
+          sudo dpkg --add-architecture i386 || true
+          sudo apt-get update -y || true
+          sudo apt-get install -y             libncurses5 libtinfo5 lib32ncurses5 lib32z1 lib32z1-dev lib32stdc++6             libc6-dev-i386 git-core gnupg flex bison gperf build-essential zip curl             zlib1g-dev libncurses-dev x11proto-core-dev libx11-dev libgl1-mesa-dev             libxml2-utils xsltproc unzip || true
+          echo "=== verify on 20.04 ==="
+          ldconfig -p | grep -E 'lib(tinfo|ncurses)5\.so' || true
+        else
+          # ---- Ubuntu 24.04: no python2, no ncurses5/libtinfo5 in apt ----
+          # Python 2 via micromamba (self-contained, no system deps)
+          curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C "$HOME" bin/micromamba
+          export MAMBA_ROOT_PREFIX="$HOME/mamba"
+          "$HOME/bin/micromamba" create -y -p "$HOME/mamba/envs/py2" -c conda-forge python=2.7
+          sudo ln -sf "$HOME/mamba/envs/py2/bin/python2.7" /usr/local/bin/python
+          sudo ln -sf "$HOME/mamba/envs/py2/bin/python2" /usr/local/bin/python2
+          python --version
+
+          # Standard deps present in 24.04
+          sudo apt-get update -y || true
+          sudo apt-get install -y             git-core gnupg flex bison gperf build-essential zip curl             zlib1g-dev libncurses-dev x11proto-core-dev libx11-dev             libgl1-mesa-dev libxml2-utils xsltproc unzip             libswitch-perl libstdc++6 libcurl4-openssl-dev || true
+
+          # 32-bit host tool libs (mkbootimg/aapt etc). i386 packages exist on 24.04.
+          sudo dpkg --add-architecture i386 || true
+          sudo apt-get update -y || true
+          sudo apt-get install -y lib32z1 lib32z1-dev lib32stdc++6 lib32gcc-s1 libc6-dev-i386 || true
+
+          # libtinfo5 + libncurses5: NOT in 24.04 apt. Download jammy debs (same 6.3-2ubuntu0.3 version!)
+          cd /tmp
+          # libtinfo5
+          curl -fsSLO "http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.3_amd64.deb" || \
+            curl -fsSLO "http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.3_amd64.deb" || true
+          # libncurses5 (same 6.3-2ubuntu0.3 to satisfy Depends)
+          curl -fsSLO "http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libncurses5_6.3-2ubuntu0.3_amd64.deb" || \
+            curl -fsSLO "http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libncurses5_6.3-2ubuntu0.3_amd64.deb" || true
+          ls -la libtinfo5*.deb libncurses5*.deb 2>/dev/null || true
+          # install both together (order-independent, same version)
+          sudo dpkg -i libtinfo5*.deb libncurses5*.deb 2>/dev/null || sudo dpkg -i libtinfo5*.deb libncurses5*.deb || sudo apt-get -f install -y
+          echo "=== verify on 24.04 ==="
+          ldconfig -p | grep -E 'lib(tinfo|ncurses)5\.so|libncurses\.so\.5' || true
+          ls -la /lib/x86_64-linux-gnu/libncurses.so.5* /lib/x86_64-linux-gnu/libtinfo.so.5* 2>/dev/null || true
+        fi
     - name: Building recovery
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
