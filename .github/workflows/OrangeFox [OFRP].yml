@@ -119,7 +119,7 @@ jobs:
           -e MAKEFILE_NAME="${{ github.event.inputs.MAKEFILE_NAME }}" \
           -e BUILD_TARGET="${{ github.event.inputs.BUILD_TARGET }}" \
           "$IMAGE" bash -e -c '
-            echo "== Running in pre-built container: $(cat /etc/os-release | grep -E \"^VERSION_ID\") =="
+            echo "== Running in pre-built container: $(cat /etc/os-release | grep -E "^VERSION_ID") =="
             echo "== python2 + ncurses5 already present =="
             python2 --version
             ldconfig -p | grep -E "lib(tinfo|ncurses)5\\.so" | head
