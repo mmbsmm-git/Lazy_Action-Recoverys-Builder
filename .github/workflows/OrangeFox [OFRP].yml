@@ -4,43 +4,43 @@ on:
   workflow_dispatch:
     inputs:
       SYNC_URL:
-        description: 'SYNC_URL'
+        description: '同步源仓库地址 (OrangeFox sync)'
         required: true
         default: 'https://github.com/momo54181/sync.git'
       MANIFEST_BRANCH:
-        description: 'MANIFEST_BRANCH'
+        description: '源码分支版本'
         required: true
         default: '9.0'
       DEVICE_TREE_URL:
-        description: 'DEVICE_TREE_URL'
+        description: '设备树仓库地址'
         required: true
         default: 'https://github.com/mmbsmm-git/android_device_youxuepai_k71v1_64_bsp'
       DEVICE_TREE_BRANCH:
-        description: 'DEVICE_TREE_BRANCH'
+        description: '设备树分支'
         required: true
         default: 'main'
       DEVICE_PATH:
-        description: 'DEVICE_PATH'
+        description: '设备树路径'
         required: true
         default: 'device/youxuepai/k71v1_64_bsp'
       COMMON_TREE_URL:
-        description: 'COMMON_TREE_URL (if no common tree, leave blank)'
+        description: '公共设备树仓库地址（无则留空）'
         required: false
         default: ''
       COMMON_PATH:
-        description: 'COMMON_PATH (if no common tree, leave blank)'
+        description: '公共设备树路径（无则留空）'
         required: false
         default: ''
       DEVICE_NAME:
-        description: 'DEVICE_NAME'
+        description: '设备代号 (Codename)'
         required: true
         default: 'k71v1_64_bsp'
       MAKEFILE_NAME:
-        description: 'MAKEFILE_NAME'
+        description: 'Makefile 名称 (lunch)'
         required: true
         default: 'omni_k71v1_64_bsp'
       BUILD_TARGET:
-        description: 'BUILD_TARGET'
+        description: '构建目标'
         required: true
         default: 'recovery'
 
@@ -51,6 +51,7 @@ env:
 
 jobs:
   build:
+    name: 编译 OrangeFox Recovery
     if: github.event.repository.owner.id == github.event.sender.id
     runs-on: ubuntu-24.04
     permissions:
@@ -58,30 +59,30 @@ jobs:
       packages: write   # needed to push to GHCR
     steps:
 
-    - name: Check Out
+    - name: 检出仓库 (Check Out)
       uses: actions/checkout@v4
 
-    - name: Cleanup (keep Docker)
+    - name: 清理环境（保留 Docker）
       uses: rokibhasansagar/slimhub_actions@main
       with:
         # slimhub_actions removes Docker by default; we need it for the container build.
         retain: "docker_buildkit,docker_imgcache"
 
-    - name: Initialize workspace
+    - name: 初始化工作目录
       run: |
         mkdir workspace
         cd workspace
         echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
       id: pwd
 
-    - name: Set Swap Space
+    - name: 设置交换空间 (Swap)
       uses: pierotofy/set-swap-space@master
       with:
         swap-size-gb: 12
 
     # Build & push the pre-built image once (cached via GHCR layers, so this is
     # fast on subsequent runs). If the image already exists it just pulls it.
-    - name: Build and cache Ubuntu 20.04 build image
+    - name: 构建并缓存 Ubuntu 20.04 编译镜像
       run: |
         set -e
         echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
@@ -94,7 +95,7 @@ jobs:
         echo "Using image: $IMAGE"
 
     # Everything (sync + clone + build) happens inside the pre-built 20.04 container.
-    - name: Sync, clone and build inside pre-built Ubuntu 20.04 container
+    - name: 在 20.04 容器内同步/克隆/编译
       run: |
         set -e
         WS="${{ steps.pwd.outputs.workspace-folder }}"
@@ -142,13 +143,13 @@ jobs:
             ls -la "/workspace/fox_$MANIFEST_BRANCH/out/target/product/$DEVICE_NAME/" 2>/dev/null || true
           '
 
-    - name: Check the output directory before uploading
+    - name: 检查输出目录（上传前）
       run: |
         ls -al ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/
         echo
         ls -al ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/
 
-    - name: Upload to Release
+    - name: 上传到 Release
       uses: softprops/action-gh-release@v2
       with:
         files: |
