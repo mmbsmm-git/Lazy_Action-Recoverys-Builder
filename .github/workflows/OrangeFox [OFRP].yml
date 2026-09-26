@@ -80,8 +80,9 @@ jobs:
       with:
         swap-size-gb: 12
 
-    # Build & push the pre-built image once (cached via GHCR layers, so this is
-    # fast on subsequent runs). If the image already exists it just pulls it.
+    # Always (re)build the image, then push to GHCR. Docker's BuildKit layer cache
+    # makes unchanged layers near-instant, so a Dockerfile edit only rebuilds the
+    # changed RUN. (A naive "pull-or-skip" would never pick up Dockerfile changes.)
     - name: 构建并缓存 Ubuntu 20.04 编译镜像
       run: |
         set -e
@@ -93,13 +94,11 @@ jobs:
         echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
 
         echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-        # Pull first if present, else build.
-        docker pull "$IMAGE" >/dev/null 2>&1 || {
-          echo "Image not cached, building..."
-          docker build -t "$IMAGE" -f Dockerfile .
-          docker push "$IMAGE"
-        }
-        echo "Cached image ready: $IMAGE"
+        # Enable BuildKit for layer caching; build always so Dockerfile changes apply.
+        export DOCKER_BUILDKIT=1
+        docker build --cache-from "$IMAGE" -t "$IMAGE" -f Dockerfile . ||           docker build -t "$IMAGE" -f Dockerfile .
+        docker push "$IMAGE"
+        echo "Image built & cached: $IMAGE"
 
     # Everything (sync + clone + build) happens inside the pre-built 20.04 container.
     - name: 在 20.04 容器内同步/克隆/编译
