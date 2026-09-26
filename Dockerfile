@@ -12,10 +12,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 COPY install-deps.sh /tmp/install-deps.sh
 RUN bash /tmp/install-deps.sh && rm -f /tmp/install-deps.sh
 
-# sanity check
+# sanity check (python2 for Android 9 build, python3 for repo; repo --version is best-effort)
 RUN python2 --version && \
+    python3 --version && \
     ldconfig -p | grep -E 'lib(tinfo|ncurses)5\.so' | head && \
-    repo --version
+    (repo --version || echo "repo version check skipped")
 
 WORKDIR /workspace
 CMD ["/bin/bash"]

@@ -28,7 +28,7 @@ apt-get update -y
 # ---- CORE (must all succeed) ----
 echo "== Installing CORE packages =="
 CORE_PKGS="
-git aria2 python2.7 python-is-python2
+git aria2 python2.7 python-is-python2 python3
 libncurses5 libtinfo5
 build-essential flex bison gperf zip curl zlib1g-dev ca-certificates
 "
