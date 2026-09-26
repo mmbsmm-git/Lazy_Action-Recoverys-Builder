@@ -45,9 +45,9 @@ on:
         default: 'recovery'
 
 env:
-  # Pre-built Ubuntu 20.04 + Android 9 deps image, pushed to this repo's GHCR.
-  # Built by the 'docker' step below on first run, reused afterwards.
-  IMAGE: ghcr.io/${{ github.repository }}/orfrp-9-builder:latest
+  # Docker repo names must be lowercase. github.repository may contain uppercase
+  # (e.g. "Lazy_Action-Recoverys-Builder"), so we lowercase it at runtime in bash.
+  IMAGE_TAG: orfrp-9-builder:latest
 
 jobs:
   build:
@@ -85,6 +85,13 @@ jobs:
     - name: 构建并缓存 Ubuntu 20.04 编译镜像
       run: |
         set -e
+        # Docker repo names must be lowercase -> lowercase github.repository
+        REPO="${{ github.repository }}"
+        REPO_LOWER=$(echo "$REPO" | tr 'A-Z' 'a-z')
+        IMAGE="ghcr.io/${REPO_LOWER}/${IMAGE_TAG}"
+        echo "Using image: $IMAGE"
+        echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
         echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
         # Pull first if present, else build.
         docker pull "$IMAGE" >/dev/null 2>&1 || {
@@ -92,7 +99,7 @@ jobs:
           docker build -t "$IMAGE" -f Dockerfile .
           docker push "$IMAGE"
         }
-        echo "Using image: $IMAGE"
+        echo "Cached image ready: $IMAGE"
 
     # Everything (sync + clone + build) happens inside the pre-built 20.04 container.
     - name: 在 20.04 容器内同步/克隆/编译
