@@ -43,29 +43,20 @@ on:
         description: 'BUILD_TARGET'
         required: true
         default: 'recovery'
-      UBUNTU_VERSION:
-        description: 'Runner OS version (20 or 24)'
-        required: true
-        default: '24'
-        type: choice
-        options:
-          - '20'
-          - '24'
 
 jobs:
   build:
     if: github.event.repository.owner.id == github.event.sender.id
-    runs-on: ubuntu-${{ github.event.inputs.UBUNTU_VERSION }}.04
+    # Runner: 24.04 (20.04 runner retired). Actual build runs in an Ubuntu 20.04
+    # Docker container, which still has python2 + libncurses5 + 32-bit libs in apt.
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
 
-    
-    # You might want to Checkout your repo first, but not mandatory
     - name: Check Out
       uses: actions/checkout@v4
 
-    # Cleanup The Actions Workspace Using Custom Composite Run Actions
     - name: Cleanup
       uses: rokibhasansagar/slimhub_actions@main
 
@@ -76,107 +67,69 @@ jobs:
         echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
       id: pwd
 
-    - name: Prepare the build environment
-      run: |
-        sudo apt install git aria2 -y
-        git clone https://gitlab.com/OrangeFox/misc/scripts
-        cd scripts
-        sudo bash setup/android_build_env.sh
-        sed -i 's/cd -/cd ../g' setup/install_android_sdk.sh
-        sudo bash setup/install_android_sdk.sh
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
-    - name: Sync OrangeFox sources and minimal manifest
-      run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}
-        git clone ${{ github.event.inputs.SYNC_URL }}
-        cd sync
-        chmod 777 orangefox_sync.sh
-        ./orangefox_sync.sh --branch ${{ github.event.inputs.MANIFEST_BRANCH }} --path ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
-    - name: Clone device tree
-      run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-        git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.DEVICE_PATH }}
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
-    - name: Clone common tree
-      if: |
-        github.event.inputs.COMMON_TREE_URL != null
-        && github.event.inputs.COMMON_PATH != null
-      run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-        git clone ${{ github.event.inputs.COMMON_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.COMMON_PATH }}
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@master
       with:
         swap-size-gb: 12
-        
-    - name: install Python2 + Android 9 legacy deps (branch by OS version)
+
+    # Everything (deps + sync + clone + build) happens inside Ubuntu 20.04 container.
+    # The runner's workspace folder is mounted to /workspace, so outputs land back
+    # on the runner and are uploaded normally below.
+    - name: Sync, clone and build inside Ubuntu 20.04 container
       run: |
         set -e
-        UBUNTU="${{ github.event.inputs.UBUNTU_VERSION }}"
-        echo "== Building on Ubuntu $UBUNTU.04 =="
+        WS="${{ steps.pwd.outputs.workspace-folder }}"
+        docker run --rm \
+          -v "$WS:/workspace" \
+          -e SYNC_URL="${{ github.event.inputs.SYNC_URL }}" \
+          -e MANIFEST_BRANCH="${{ github.event.inputs.MANIFEST_BRANCH }}" \
+          -e DEVICE_TREE_URL="${{ github.event.inputs.DEVICE_TREE_URL }}" \
+          -e DEVICE_TREE_BRANCH="${{ github.event.inputs.DEVICE_TREE_BRANCH }}" \
+          -e DEVICE_PATH="${{ github.event.inputs.DEVICE_PATH }}" \
+          -e COMMON_TREE_URL="${{ github.event.inputs.COMMON_TREE_URL }}" \
+          -e COMMON_PATH="${{ github.event.inputs.COMMON_PATH }}" \
+          -e DEVICE_NAME="${{ github.event.inputs.DEVICE_NAME }}" \
+          -e MAKEFILE_NAME="${{ github.event.inputs.MAKEFILE_NAME }}" \
+          -e BUILD_TARGET="${{ github.event.inputs.BUILD_TARGET }}" \
+          ubuntu:20.04 bash -e -c '
+            echo "== Running inside Ubuntu $(cat /etc/os-release | grep -E "^VERSION_ID" ) =="
 
-        if [ "$UBUNTU" = "20" ]; then
-          # ---- Ubuntu 20.04: has python2 and libncurses5/libtinfo5 in apt natively ----
-          sudo apt-get update -y
-          sudo apt-get install -y python-is-python2 || sudo apt-get install -y python2
-          python --version || python2 --version
-          # Android 9 build deps incl. legacy 32-bit + ncurses5
-          sudo dpkg --add-architecture i386 || true
-          sudo apt-get update -y || true
-          sudo apt-get install -y             libncurses5 libtinfo5 lib32ncurses5 lib32z1 lib32z1-dev lib32stdc++6             libc6-dev-i386 git-core gnupg flex bison gperf build-essential zip curl             zlib1g-dev libncurses-dev x11proto-core-dev libx11-dev libgl1-mesa-dev             libxml2-utils xsltproc unzip || true
-          echo "=== verify on 20.04 ==="
-          ldconfig -p | grep -E 'lib(tinfo|ncurses)5\.so' || true
-        else
-          # ---- Ubuntu 24.04: no python2, no ncurses5/libtinfo5 in apt ----
-          # Python 2 via micromamba (self-contained, no system deps)
-          curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C "$HOME" bin/micromamba
-          export MAMBA_ROOT_PREFIX="$HOME/mamba"
-          "$HOME/bin/micromamba" create -y -p "$HOME/mamba/envs/py2" -c conda-forge python=2.7
-          sudo ln -sf "$HOME/mamba/envs/py2/bin/python2.7" /usr/local/bin/python
-          sudo ln -sf "$HOME/mamba/envs/py2/bin/python2" /usr/local/bin/python2
-          python --version
+            # --- 1) All Android 9 host build deps (20.04 has python2 + ncurses5 in apt) ---
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -y
+            apt-get install -y git aria2 python2.7 python-is-python2 \
+              libncurses5 libtinfo5 lib32ncurses5 lib32z1 lib32stdc++6 libc6-dev-i386 \
+              build-essential flex bison gperf zip curl zlib1g-dev \
+              x11proto-core-dev libx11-dev libgl1-mesa-dev libxml2-utils xsltproc unzip \
+              || true
+            python2 --version || python --version
+            ldconfig -p | grep -E "lib(tinfo|ncurses)5\\.so" || true
 
-          # Standard deps present in 24.04
-          sudo apt-get update -y || true
-          sudo apt-get install -y             git-core gnupg flex bison gperf build-essential zip curl             zlib1g-dev libncurses-dev x11proto-core-dev libx11-dev             libgl1-mesa-dev libxml2-utils xsltproc unzip             libswitch-perl libstdc++6 libcurl4-openssl-dev || true
+            # --- 2) Sync OrangeFox sources ---
+            cd /workspace
+            git clone "$SYNC_URL" sync
+            cd sync
+            chmod 777 orangefox_sync.sh
+            ./orangefox_sync.sh --branch "$MANIFEST_BRANCH" --path "/workspace/fox_$MANIFEST_BRANCH"
 
-          # 32-bit host tool libs (mkbootimg/aapt etc). i386 packages exist on 24.04.
-          sudo dpkg --add-architecture i386 || true
-          sudo apt-get update -y || true
-          sudo apt-get install -y lib32z1 lib32z1-dev lib32stdc++6 lib32gcc-s1 libc6-dev-i386 || true
+            # --- 3) Clone device tree ---
+            cd "/workspace/fox_$MANIFEST_BRANCH"
+            git clone "$DEVICE_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$DEVICE_PATH"
 
-          # libtinfo5 + libncurses5: NOT in 24.04 apt. Download jammy debs (same 6.3-2ubuntu0.3 version!)
-          cd /tmp
-          # libtinfo5
-          curl -fsSLO "http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.3_amd64.deb" || \
-            curl -fsSLO "http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.3_amd64.deb" || true
-          # libncurses5 (same 6.3-2ubuntu0.3 to satisfy Depends)
-          curl -fsSLO "http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libncurses5_6.3-2ubuntu0.3_amd64.deb" || \
-            curl -fsSLO "http://security.ubuntu.com/ubuntu/pool/universe/n/ncurses/libncurses5_6.3-2ubuntu0.3_amd64.deb" || true
-          ls -la libtinfo5*.deb libncurses5*.deb 2>/dev/null || true
-          # install both together (order-independent, same version)
-          sudo dpkg -i libtinfo5*.deb libncurses5*.deb 2>/dev/null || sudo dpkg -i libtinfo5*.deb libncurses5*.deb || sudo apt-get -f install -y
-          echo "=== verify on 24.04 ==="
-          ldconfig -p | grep -E 'lib(tinfo|ncurses)5\.so|libncurses\.so\.5' || true
-          ls -la /lib/x86_64-linux-gnu/libncurses.so.5* /lib/x86_64-linux-gnu/libtinfo.so.5* 2>/dev/null || true
-        fi
-    - name: Building recovery
-      run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}/fox_${{ github.event.inputs.MANIFEST_BRANCH }}
-        set +e
-        source build/envsetup.sh
-        export FOX_USE_TWRP_RECOVERY_IMAGE_BUILDER=1
-        export ALLOW_MISSING_DEPENDENCIES=true
-        set -e
-        lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng && make clean && mka adbd ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-      continue-on-error: true
+            # --- 4) Clone common tree (optional) ---
+            if [ -n "$COMMON_TREE_URL" ] && [ -n "$COMMON_PATH" ]; then
+              git clone "$COMMON_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$COMMON_PATH"
+            fi
+
+            # --- 5) Build recovery ---
+            cd "/workspace/fox_$MANIFEST_BRANCH"
+            source build/envsetup.sh
+            export FOX_USE_TWRP_RECOVERY_IMAGE_BUILDER=1
+            export ALLOW_MISSING_DEPENDENCIES=true
+            lunch "${MAKEFILE_NAME}-eng" && make clean && mka adbd "${BUILD_TARGET}image" -j$(nproc --all) || true
+            echo "=== BUILD FINISHED ==="
+            ls -la "/workspace/fox_$MANIFEST_BRANCH/out/target/product/$DEVICE_NAME/" 2>/dev/null || true
+          '
 
     - name: Check the output directory before uploading
       run: |
