@@ -4,18 +4,24 @@ FROM ubuntu:20.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# All deps that Android 9 (OFRP 9.0) build needs on Ubuntu 20.04:
-#  - python2.7 + python-is-python2 (build scripts need python2)
-#  - libncurses5 / libtinfo5  (old clang / header-abi-dumper)
-#  - 32-bit libs (lib32ncurses5, lib32z1, lib32stdc++6, libc6-dev-i386)
-#  - standard AOSP host build deps
+# All deps that Android 9 (OFRP 9.0) build needs on Ubuntu 20.04.
+# NOTE: on focal(20.04) the 32-bit ncurses package is lib32ncurses-dev,
+# NOT lib32ncurses5 (which only exists on 16.04/18.04).
+# Packages are split into two RUNs; the legacy ones must succeed, the rest are
+# allowed to fail (|| true) so a bad package name doesn't kill the whole image.
 RUN apt-get update -y && apt-get install -y \
     git aria2 python2.7 python-is-python2 \
-    libncurses5 libtinfo5 lib32ncurses5 lib32z1 lib32stdc++6 libc6-dev-i386 \
-    build-essential flex bison gperf zip curl zlib1g-dev \
-    x11proto-core-dev libx11-dev libgl1-mesa-dev libxml2-utils xsltproc unzip \
-    ca-certificates \
+    libncurses5 libtinfo5 lib32ncurses-dev \
+    libc6-dev-i386 \
+    build-essential flex bison gperf zip curl zlib1g-dev ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Extra 32-bit / multilib host-tool deps (best-effort)
+RUN apt-get update -y && apt-get install -y \
+    lib32z1 lib32z1-dev lib32stdc++6 lib32readline-dev \
+    gcc-multilib g++-multilib \
+    x11proto-core-dev libx11-dev libgl1-mesa-dev libxml2-utils xsltproc unzip \
+    || true
 
 # sanity check
 RUN python2 --version && \
