@@ -145,6 +145,24 @@ jobs:
               git clone "$COMMON_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$COMMON_PATH"
             fi
 
+            # --- 3.5) Restrict languages to en + zh_CN only ---
+            LANG_DIR=$(find /workspace/fox_$MANIFEST_BRANCH/bootable/recovery -type d -name languages 2>/dev/null | head -1)
+            echo "== Restricting OF languages to en + zh_CN (dir: $LANG_DIR) =="
+            if [ -z "$LANG_DIR" ]; then
+              echo "WARNING: languages dir not found; skipping language restriction"
+            else
+              ls "$LANG_DIR"
+              for f in "$LANG_DIR"/*.xml; do
+                [ -e "$f" ] || continue
+                base=$(basename "$f")
+                if [ "$base" != "en.xml" ] && [ "$base" != "zh_CN.xml" ]; then
+                  rm -f "$f"
+                fi
+              done
+              echo "== Remaining languages =="
+              ls "$LANG_DIR"
+            fi
+
             # --- 4) Build recovery ---
             cd "/workspace/fox_$MANIFEST_BRANCH"
             source build/envsetup.sh
