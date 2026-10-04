@@ -80,10 +80,10 @@ jobs:
       with:
         swap-size-gb: 12
 
-    # Always (re)build the image, then push to GHCR. Docker's BuildKit layer cache
-    # makes unchanged layers near-instant, so a Dockerfile edit only rebuilds the
-    # changed RUN. (A naive "pull-or-skip" would never pick up Dockerfile changes.)
-    - name: 构建并缓存 Ubuntu 20.04 编译镜像
+    # Image is pre-built and cached in GHCR. Pull it and reuse directly (deps are
+    # installed once, not on every run). Only build + push on first run when GHCR
+    # has no image yet. This is the whole point of "cache the built image".
+    - name: 拉取现成镜像（不存在才构建并固化一次）
       run: |
         set -e
         # Docker repo names must be lowercase -> lowercase github.repository
@@ -95,12 +95,16 @@ jobs:
 
         echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
         export DOCKER_BUILDKIT=1
-        # Pull cached layers first (ignore failure on first run), then build so
-        # unchanged layers are reused and Dockerfile/install-deps.sh changes apply.
-        docker pull "$IMAGE" >/dev/null 2>&1 || true
-        docker build --cache-from "$IMAGE" -t "$IMAGE" -f Dockerfile . ||           docker build -t "$IMAGE" -f Dockerfile .
-        docker push "$IMAGE"
-        echo "Image built & cached: $IMAGE"
+        # 镜像已固化在 GHCR -> 直接拉取复用，跳过 build（依赖只装一次，不再重装）。
+        # 仅当 GHCR 尚无该镜像（首次运行）时才构建并推送一次。
+        if docker pull "$IMAGE"; then
+          echo "使用 GHCR 现成镜像（依赖已固化，跳过安装）: $IMAGE"
+        else
+          echo "GHCR 暂无镜像，构建并推送（仅首次，依赖安装一次）..."
+          docker build --cache-from "$IMAGE" -t "$IMAGE" -f Dockerfile .
+          docker push "$IMAGE"
+          echo "镜像已固化到 GHCR: $IMAGE"
+        fi
 
     # Everything (sync + clone + build) happens inside the pre-built 20.04 container.
     - name: 在 20.04 容器内同步/克隆/编译
