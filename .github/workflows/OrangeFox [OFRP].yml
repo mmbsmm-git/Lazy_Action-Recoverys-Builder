@@ -75,11 +75,6 @@ jobs:
         echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
       id: pwd
 
-    - name: 复制 ramdisk 精简脚本到工作区
-      run: |
-        cp slim_rec.py ${{ steps.pwd.outputs.workspace-folder }}/slim_rec.py
-        ls -la ${{ steps.pwd.outputs.workspace-folder }}/slim_rec.py
-
     - name: 设置交换空间 (Swap)
       uses: pierotofy/set-swap-space@master
       with:
@@ -179,18 +174,28 @@ jobs:
             lunch "${MAKEFILE_NAME}-eng" && make clean && mka adbd "${BUILD_TARGET}image" -j$(nproc --all)
             echo "=== BUILD FINISHED ==="
             ls -la "/workspace/fox_$MANIFEST_BRANCH/out/target/product/$DEVICE_NAME/" 2>/dev/null || true
-
-            # --- 5) Slim the ramdisk (MTK lk hard-limit: ramdisk_size field <=16MB) ---
-            echo "== Slimming recovery.img ramdisk (must be <=16MB for MTK lk) =="
-            command -v python3 >/dev/null || { echo "no python3, installing..."; apt-get update && apt-get install -y python3; }
-            IMG="/workspace/fox_$MANIFEST_BRANCH/out/target/product/$DEVICE_NAME/recovery.img"
-            echo "before: $(stat -c %s "$IMG") bytes"
-            python3 /workspace/slim_rec.py "$IMG" "$IMG.slim"
-            mv -f "$IMG.slim" "$IMG"
-            echo "after: $(stat -c %s "$IMG") bytes"
-            python3 -c "import struct;d=open('$IMG','rb').read();print('ramdisk_size=%d (%.2fMB) <=16MB:%s total=%d'%(struct.unpack('<I',d[16:20])[0],struct.unpack('<I',d[16:20])[0]/1048576,struct.unpack('<I',d[16:20])[0]<=0x1000000,len(d)))"
-            echo "=== SLIM DONE ==="
           '
+
+    # Slim the recovery.img ramdisk in the HOST runner (not inside the docker
+    # single-quoted bash string, to avoid quote-nesting syntax errors). The img
+    # lives in $WS which is mounted as /workspace in the container.
+    # MTK lk hard-limit: img header ramdisk_size field must be <=16MB (0x1000000),
+    # and lk ignores ramdisk_addr (decompresses into a fixed 0x55000000 16MB buffer).
+    - name: 精简 recovery.img ramdisk (MTK lk ≤16MB 限制)
+      run: |
+        set -e
+        WS="${{ steps.pwd.outputs.workspace-folder }}"
+        IMG="$WS/fox_${{ github.event.inputs.MANIFEST_BRANCH }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/recovery.img"
+        echo "== Slimming ramdisk: $IMG =="
+        test -f "$IMG" || { echo "recovery.img not found!"; exit 1; }
+        echo "before: $(stat -c %s "$IMG") bytes"
+        command -v python3 >/dev/null || sudo apt-get update -y && sudo apt-get install -y python3
+        python3 slim_rec.py "$IMG" "$IMG.slim"
+        mv -f "$IMG.slim" "$IMG"
+        echo "after: $(stat -c %s "$IMG") bytes"
+        python3 -c 'import struct,sys;d=open(sys.argv[1],"rb").read();sz=struct.unpack("<I",d[16:20])[0];print("ramdisk_size=%d (%.2fMB) <=16MB:%s total=%d"%(sz,sz/1048576.0,sz<=0x1000000,len(d)))' "$IMG"
+        echo "=== SLIM DONE ==="
+      
 
     - name: 检查输出目录（上传前）
       run: |
