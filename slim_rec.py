@@ -12,11 +12,23 @@ OFRP 默认 ramdisk >16MB -> lk 死循环。本脚本删减 sbin 冗余 + 装饰
 import struct, zlib, gzip, os, sys
 
 SBL_DEL = {
-    'bash', 'zip', 'aapt', 'charger', 'sload.f2fs', 'mkfs.f2fs',
-    'magiskboot', 'unpackbootimg',
+    # 无关 / f2fs-only 工具（本机 data/cache/vendor/system 全 ext4，f2fs 工具无用）
+    'charger', 'sload.f2fs', 'mkfs.f2fs',
     'libclang_rt.ubsan_standalone-aarch64-android.so',
+    # 非刷机冗余：截屏(fb2png)、lzma/pigz(刷zip走zlib)、调试回溯库
+    'fb2png', 'lzma', 'liblzma.so', 'pigz',
+    'libunwindstack.so', 'libunwind.so', 'libbacktrace.so',
+    # 日志工具（logd/logcat 二进制，init 起失败不 FATAL；liblog.so 库保留）
+    'logd', 'logcat', 'liblogcat.so', 'liblogwrap.so', 'libsysutils.so',
+    # 外置存储(ntfs/exfat/fat)支持：P709 刷机走 internal(/data/media)+fastboot，无外置SD场景
+    'libntfs-3g.so', 'libfuse-lite.so', 'exfat-fuse', 'mkfs.ntfs', 'mount.ntfs',
+    'fsck.ntfs', 'mkexfatfs', 'fsck.exfat', 'libexfat_twrp.so', 'fsck.fat',
+    'mkfs.fat', 'fatlabel',
+    # NOTE: 保留 bash + toybox 全套命令行（OFRP 终端要能用）。
+    # 保留刷机必需 zip/aapt/magiskboot/unpackbootimg/mkbootimg/e2fsck/mke2fs/resize2fs。
 }
 FONTS_KEEP = {'RobotoCondensed-Regular.ttf', 'DroidSansFallback.ttf', 'OFL.txt'}
+LANG_KEEP = {'en.xml', 'zh_CN.xml'}   # 只留中英（用户要求 OFRP 只显示中/英）
 
 def parse_cpio(data):
     entries = []
@@ -85,6 +97,8 @@ def main(inp, outp):
             removed += e['fsz']; print('  del sbin/%s (%dKB)' % (base, e['fsz']//1024)); continue
         if ('/fonts/' in name or name.startswith('twres/fonts/')) and base not in FONTS_KEEP:
             removed += e['fsz']; print('  del fonts/%s (%dKB)' % (base, e['fsz']//1024)); continue
+        if ('/languages/' in name or name.startswith('twres/languages/')) and base not in LANG_KEEP:
+            removed += e['fsz']; print('  del lang/%s (%dKB)' % (base, e['fsz']//1024)); continue
         keep.append(e)
     print('removed decompressed %dKB' % (removed//1024))
 
