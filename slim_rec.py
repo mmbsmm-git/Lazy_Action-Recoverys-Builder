@@ -19,7 +19,9 @@ SBL_DEL = {
     'fb2png', 'lzma', 'liblzma.so', 'pigz',
     'libunwindstack.so', 'libunwind.so', 'libbacktrace.so',
     # 日志工具（logd/logcat 二进制，init 起失败不 FATAL；liblog.so 库保留）
-    'logd', 'logcat', 'liblogcat.so', 'liblogwrap.so', 'libsysutils.so',
+    # NOTE: liblogwrap.so 必须保留！libext4_utils.so 依赖它，recovery 主程序依赖
+    #       libext4_utils.so，删了 liblogwrap.so → linker 加载 recovery 失败 → 崩 → 死循环。
+    'logd', 'logcat', 'liblogcat.so', 'libsysutils.so',
     # 外置存储(ntfs/exfat/fat)支持：P709 刷机走 internal(/data/media)+fastboot，无外置SD场景
     'libntfs-3g.so', 'libfuse-lite.so', 'exfat-fuse', 'mkfs.ntfs', 'mount.ntfs',
     'fsck.ntfs', 'mkexfatfs', 'fsck.exfat', 'libexfat_twrp.so', 'fsck.fat',
@@ -99,6 +101,21 @@ def main(inp, outp):
             removed += e['fsz']; print('  del fonts/%s (%dKB)' % (base, e['fsz']//1024)); continue
         if ('/languages/' in name or name.startswith('twres/languages/')) and base not in LANG_KEEP:
             removed += e['fsz']; print('  del lang/%s (%dKB)' % (base, e['fsz']//1024)); continue
+        # charger 服务：init.rc 不 import hlthchrg.rc，但为防任何隐式加载路径，
+        # 将其内容替换为注释（保留文件存在避免 import 缺失问题）。
+        if os.path.basename(name) == 'init.recovery.hlthchrg.rc':
+            e['content'] = b'# charger service disabled by slim_rec.py (sbin/charger removed)\n'
+            e['fsz'] = len(e['content'])
+            print('  neutralize %s' % name)
+        # prop.default：ro.sf.hwrotation 0 -> 90（P709 竖屏面板，stock rec 用 90；
+        #   设备树 device.mk 写 0 会导致显示方向错误/初始化异常）
+        if os.path.basename(name) == 'prop.default':
+            c = e['content'].decode('utf-8', 'replace')
+            if 'ro.sf.hwrotation=0' in c:
+                c = c.replace('ro.sf.hwrotation=0', 'ro.sf.hwrotation=90')
+                e['content'] = c.encode('utf-8')
+                e['fsz'] = len(e['content'])
+                print('  prop.default: hwrotation 0 -> 90')
         keep.append(e)
     print('removed decompressed %dKB' % (removed//1024))
 
@@ -111,9 +128,25 @@ def main(inp, outp):
     outimg[16:20] = struct.pack('<I', len(gz))
     outimg[20:24] = struct.pack('<I', 0x55000000)
     outimg += gz
+    # 保留尾部 DTBO（MTK device tree，lk 加载内核必需；裁掉会内核 panic 死循环）
+    DTBO_MAGIC = bytes.fromhex('D7B7AB1E')
+    idx = d.find(DTBO_MAGIC, roff + rsz)
+    dtbo = b''
+    if idx >= 0:
+        tot = struct.unpack('>I', d[idx+4:idx+8])[0]   # MTK dtbo header: big-endian
+        if tot > 0 and idx + tot <= len(d):
+            dtbo = d[idx:idx+tot]
+            pad = (0x800 - (len(outimg) % 0x800)) % 0x800
+            outimg += b'\0' * pad
+            outimg += dtbo
+            print('DTBO preserved: %d bytes (aligned)' % len(dtbo))
+        else:
+            print('WARNING: bad DTBO size')
+    else:
+        print('WARNING: no DTBO found, kernel may panic')
     open(outp, 'wb').write(bytes(outimg))
-    print('OUTPUT %s total=%d (%.2fMB) kernel=%d ramdisk=%d raddr=0x55000000' % (
-        outp, len(outimg), len(outimg)/1048576, len(kernel), len(gz)))
+    print('OUTPUT %s total=%d (%.2fMB) kernel=%d ramdisk=%d raddr=0x55000000 dtbo=%d' % (
+        outp, len(outimg), len(outimg)/1048576, len(kernel), len(gz), len(dtbo)))
 
 if __name__ == '__main__':
     main(sys.argv[1], sys.argv[2])
