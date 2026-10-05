@@ -107,15 +107,13 @@ def main(inp, outp):
             e['content'] = b'# charger service disabled by slim_rec.py (sbin/charger removed)\n'
             e['fsz'] = len(e['content'])
             print('  neutralize %s' % name)
-        # prop.default：ro.sf.hwrotation 0 -> 90（P709 竖屏面板，stock rec 用 90；
-        #   设备树 device.mk 写 0 会导致显示方向错误/初始化异常）
+        # prop.default：保留设备树的 ro.sf.hwrotation（device.mk 写 0=竖屏，用户偏好。
+        #   面板物理竖屏 1200x2000，hwrotation=0 时显示竖屏且触摸坐标与显示一致。
+        #   不再强制改 90（那是对齐原厂横屏 rec；竖屏是用户明确要求）。
         if os.path.basename(name) == 'prop.default':
             c = e['content'].decode('utf-8', 'replace')
             if 'ro.sf.hwrotation=0' in c:
-                c = c.replace('ro.sf.hwrotation=0', 'ro.sf.hwrotation=90')
-                e['content'] = c.encode('utf-8')
-                e['fsz'] = len(e['content'])
-                print('  prop.default: hwrotation 0 -> 90')
+                print('  prop.default: hwrotation=0 (竖屏, 保留, 用户偏好)')
         keep.append(e)
     print('removed decompressed %dKB' % (removed//1024))
 
