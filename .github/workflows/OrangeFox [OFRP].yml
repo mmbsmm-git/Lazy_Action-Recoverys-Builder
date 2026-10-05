@@ -75,6 +75,11 @@ jobs:
         echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
       id: pwd
 
+    - name: 复制 ramdisk 精简脚本到工作区
+      run: |
+        cp slim_rec.py ${{ steps.pwd.outputs.workspace-folder }}/slim_rec.py
+        ls -la ${{ steps.pwd.outputs.workspace-folder }}/slim_rec.py
+
     - name: 设置交换空间 (Swap)
       uses: pierotofy/set-swap-space@master
       with:
@@ -145,12 +150,12 @@ jobs:
               git clone "$COMMON_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$COMMON_PATH"
             fi
 
-            # --- 3.5) Restrict languages to en + zh_CN only ---
-            LANG_DIR=$(find /workspace/fox_$MANIFEST_BRANCH/bootable/recovery -type d -name languages 2>/dev/null | head -1)
-            echo "== Restricting OF languages to en + zh_CN (dir: $LANG_DIR) =="
-            if [ -z "$LANG_DIR" ]; then
-              echo "WARNING: languages dir not found; skipping language restriction"
-            else
+            # --- 3.5) Restrict languages to en + zh_CN only (ALL languages dirs) ---
+            found=0
+            while IFS= read -r LANG_DIR; do
+              [ -n "$LANG_DIR" ] || continue
+              found=1
+              echo "== Pruning languages dir: $LANG_DIR =="
               ls "$LANG_DIR"
               for f in "$LANG_DIR"/*.xml; do
                 [ -e "$f" ] || continue
@@ -159,8 +164,11 @@ jobs:
                   rm -f "$f"
                 fi
               done
-              echo "== Remaining languages =="
+              echo "== Remaining =="
               ls "$LANG_DIR"
+            done < <(find /workspace/fox_$MANIFEST_BRANCH/bootable/recovery -type d -name languages 2>/dev/null)
+            if [ "$found" -eq 0 ]; then
+              echo "WARNING: no languages dir found; skipping restriction"
             fi
 
             # --- 4) Build recovery ---
@@ -171,6 +179,17 @@ jobs:
             lunch "${MAKEFILE_NAME}-eng" && make clean && mka adbd "${BUILD_TARGET}image" -j$(nproc --all)
             echo "=== BUILD FINISHED ==="
             ls -la "/workspace/fox_$MANIFEST_BRANCH/out/target/product/$DEVICE_NAME/" 2>/dev/null || true
+
+            # --- 5) Slim the ramdisk (MTK lk hard-limit: ramdisk_size field <=16MB) ---
+            echo "== Slimming recovery.img ramdisk (must be <=16MB for MTK lk) =="
+            command -v python3 >/dev/null || { echo "no python3, installing..."; apt-get update && apt-get install -y python3; }
+            IMG="/workspace/fox_$MANIFEST_BRANCH/out/target/product/$DEVICE_NAME/recovery.img"
+            echo "before: $(stat -c %s "$IMG") bytes"
+            python3 /workspace/slim_rec.py "$IMG" "$IMG.slim"
+            mv -f "$IMG.slim" "$IMG"
+            echo "after: $(stat -c %s "$IMG") bytes"
+            python3 -c "import struct;d=open('$IMG','rb').read();print('ramdisk_size=%d (%.2fMB) <=16MB:%s total=%d'%(struct.unpack('<I',d[16:20])[0],struct.unpack('<I',d[16:20])[0]/1048576,struct.unpack('<I',d[16:20])[0]<=0x1000000,len(d)))"
+            echo "=== SLIM DONE ==="
           '
 
     - name: 检查输出目录（上传前）
