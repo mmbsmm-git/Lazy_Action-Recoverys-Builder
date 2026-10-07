@@ -176,7 +176,7 @@ jobs:
             source build/envsetup.sh
             export FOX_USE_TWRP_RECOVERY_IMAGE_BUILDER=1
             export ALLOW_MISSING_DEPENDENCIES=true
-            lunch "${MAKEFILE_NAME}-eng" && make clean && mka adbd "${BUILD_TARGET}image" -j$(nproc --all)
+            lunch "${MAKEFILE_NAME}-userdebug" && make clean && mka adbd "${BUILD_TARGET}image" -j$(nproc --all)
             echo "=== BUILD FINISHED ==="
             ls -la "/workspace/fox_$MANIFEST_BRANCH/out/target/product/$DEVICE_NAME/" 2>/dev/null || true
 
