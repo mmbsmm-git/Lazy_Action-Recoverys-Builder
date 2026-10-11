@@ -254,6 +254,14 @@ def main(inp, outp, dtbo_path=None):
                 0o100644, required=True)
     ensure_file('ueventd.rc', os.path.join('recovery', 'root', 'ueventd.rc'),
                 0o100644, required=False)
+    # 中英双语：中文语言文件 + CJK 字体（zh_CN.xml 用 <resource type="fontoverride"
+    # filename="DroidSansFallback.ttf"/> 在切换中文时覆盖字体，故两者必须同时存在）。
+    ensure_file('twres/languages/zh_CN.xml',
+                os.path.join('recovery', 'root', 'twres', 'languages', 'zh_CN.xml'),
+                0o100644, required=False)
+    ensure_file('twres/fonts/DroidSansFallback.ttf',
+                os.path.join('recovery', 'root', 'twres', 'fonts', 'DroidSansFallback.ttf'),
+                0o100644, required=False)
     if not any(e['name'] in ('twres/twrp', 'twres/twrp/') for e in keep):
         keep.append(make_entry('twres/twrp', b'', 0o040755))
         print('  twres/twrp: 注入空目录')
