@@ -261,17 +261,19 @@ def main(inp, outp, dtbo_path=None):
                     0o100644, required=True)
         ensure_file('ueventd.rc', os.path.join('recovery', 'root', 'ueventd.rc'),
                     0o100644, required=False)
-        # 中英双语：中文语言文件 + CJK 字体（zh_CN.xml 用 <resource type="fontoverride"
-        # filename="DroidSansFallback.ttf"/> 在切换中文时覆盖字体，故两者必须同时存在）。
-        ensure_file('twres/languages/zh_CN.xml',
-                    os.path.join('recovery', 'root', 'twres', 'languages', 'zh_CN.xml'),
-                    0o100644, required=False)
-        ensure_file('twres/fonts/DroidSansFallback.ttf',
-                    os.path.join('recovery', 'root', 'twres', 'fonts', 'DroidSansFallback.ttf'),
-                    0o100644, required=False)
         if not any(e['name'] in ('twres/twrp', 'twres/twrp/') for e in keep):
             keep.append(make_entry('twres/twrp', b'', 0o040755))
             print('  twres/twrp: 注入空目录')
+
+    # 中英双语：OFFRP/TWRP 都注入(有源则注入)。中文语言文件 + CJK 字体
+    # (zh_CN.xml 用 <resource type="fontoverride" filename="DroidSansFallback.ttf"/> 覆盖字体
+    #  以显示中文字形, 故两者必须同时存在)。TWRP 上游无中文语言文件, 复用本设备树的汉化。
+    ensure_file('twres/languages/zh_CN.xml',
+                os.path.join('recovery', 'root', 'twres', 'languages', 'zh_CN.xml'),
+                0o100644, required=False)
+    ensure_file('twres/fonts/DroidSansFallback.ttf',
+                os.path.join('recovery', 'root', 'twres', 'fonts', 'DroidSansFallback.ttf'),
+                0o100644, required=False)
 
     # 默认开启 adb：强制 prop.default 里 ro.adb.secure=0(免主机授权) 与
     # persist.sys.usb.config=adb。（adbd 的启动已由设备树 init.recovery.mt6771.rc 保证）
