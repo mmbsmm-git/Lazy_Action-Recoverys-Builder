@@ -224,7 +224,20 @@ def main(inp, outp, dtbo_path=None):
                     e['fsz'] = len(data)
                     placed = True
             if not placed:
-                keep.append(make_entry(entry_name, data, mode))
+                # 插到同名顶层目录条目之后（保持 cpio 内顺序自然，便于比对），而不是追加到末尾
+                parent = entry_name.split('/', 1)[0] if '/' in entry_name else None
+                idx = None
+                for i, e in enumerate(keep):
+                    if e['name'] == parent:
+                        idx = i
+                        break
+                    if parent and e['name'].startswith(parent + '/'):
+                        idx = i
+                        break
+                if idx is None:
+                    keep.append(make_entry(entry_name, data, mode))
+                else:
+                    keep.insert(idx + 1, make_entry(entry_name, data, mode))
             print('  %s: %s (%d bytes)' % (entry_name, '替换' if placed else '注入', len(data)))
             return
         if have:
