@@ -162,6 +162,17 @@ jobs:
             # --- 2) 克隆设备树 ---
             git clone "$DEVICE_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$DEVICE_PATH"
 
+            # --- 2.5) ★TWRP 适配★ 移除 OFRP 专用的 recovery/root 覆盖文件 ---
+            # 设备树的 recovery/root/** 会被自动叠加进 recovery ramdisk。其中
+            # twres/ui.xml 是 OrangeFox 的 include 清单(引用 /twres/pages|themes|resources)，
+            # 会覆盖 TWRP 自带主题 -> TWRP GUI 主题加载失败(与 OFRP 之前同样的崩法)；
+            # ueventd.rc 也来自 OFRP 产物，TWRP 会自己生成。故 TWRP 编译前删掉这两者，
+            # 让 TWRP 用自带主题/ueventd。设备级 init.recovery.*.rc 与 prop.default 保留(adb/分区)。
+            echo "== TWRP 适配: 移除 OFRP 主题覆盖 =="
+            rm -rf "$DEVICE_PATH/recovery/root/twres"
+            rm -f "$DEVICE_PATH/recovery/root/ueventd.rc"
+            ls -la "$DEVICE_PATH/recovery/root" || true
+
             # --- 3) 克隆公共设备树（可选）---
             if [ -n "$COMMON_TREE_URL" ] && [ -n "$COMMON_PATH" ]; then
               git clone "$COMMON_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$COMMON_PATH"
