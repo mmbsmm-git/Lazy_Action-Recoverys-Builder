@@ -34,11 +34,10 @@ SBL_DEL = {
     'mkfs.fat', 'fatlabel',
     # 保留 bash + toybox 全套 + 刷机工具
 }
-# 字体：**绝对不能删**。OrangeFox 主题(themes/font.xml)引用 Roboto-Regular/Medium、
-# GoogleSans-Medium/Regular、EuclidFlex-* 等 15 个字体；删了会导致主题字体资源加载失败
-# (NULL) -> 渲染 SIGSEGV -> init 反复重启(SIGSEGV 循环)。2026-10-11 实测教训。
-# 只有语言文件按用户要求裁剪(仅 en/zh_CN)。
-LANG_KEEP = {'en.xml', 'zh_CN.xml'}
+# 语言：按用户要求只留中/英。保留 en.xml 与任何中文语言文件
+# (zh.xml / zh_CN.xml / zh_Hans.xml / zh-rCN.xml ...)，避免因文件名不同被误删。
+def lang_keep(base):
+    return base == 'en.xml' or base.startswith('zh')
 
 # —— 原厂 recovery.bin (md5 ae5fd316..., 能进 rec) 的头常量 ——
 PAGE = 2048
@@ -199,8 +198,8 @@ def main(inp, outp, dtbo_path=None):
         base = os.path.basename(name)
         if ('/sbin/' in name or name.startswith('sbin/')) and base in SBL_DEL:
             removed += e['fsz']; continue
-        # 注意：字体一律保留(见 FONTS 说明)。语言按 LANG_KEEP 裁剪。
-        if ('/languages/' in name or name.startswith('twres/languages/')) and base not in LANG_KEEP:
+        # 注意：字体一律保留(主题 font.xml 需要；删了会 SIGSEGV)。语言按 lang_keep 裁剪。
+        if ('/languages/' in name or name.startswith('twres/languages/')) and not lang_keep(base):
             removed += e['fsz']; continue
         if base == 'init.recovery.hlthchrg.rc':
             e['content'] = b'# charger service disabled by slim_rec.py\n'

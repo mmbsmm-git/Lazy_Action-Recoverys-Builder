@@ -164,9 +164,11 @@ jobs:
               for f in "$LANG_DIR"/*.xml; do
                 [ -e "$f" ] || continue
                 base=$(basename "$f")
-                if [ "$base" != "en.xml" ] && [ "$base" != "zh_CN.xml" ]; then
-                  rm -f "$f"
-                fi
+                # 保留英文 + 任何中文语言文件(zh.xml / zh_CN.xml / zh_Hans.xml / zh-rCN.xml ...)
+                case "$base" in
+                  en.xml|zh*) : ;;
+                  *) rm -f "$f" ;;
+                esac
               done
               echo "== Remaining =="
               ls "$LANG_DIR"
