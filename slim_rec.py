@@ -265,6 +265,30 @@ def main(inp, outp, dtbo_path=None):
     if not any(e['name'] in ('twres/twrp', 'twres/twrp/') for e in keep):
         keep.append(make_entry('twres/twrp', b'', 0o040755))
         print('  twres/twrp: 注入空目录')
+
+    # 默认开启 adb：强制 prop.default 里 ro.adb.secure=0(免主机授权) 与
+    # persist.sys.usb.config=adb。（adbd 的启动已由设备树 init.recovery.mt6771.rc 保证）
+    for e in keep:
+        if e['name'] == 'prop.default':
+            t = e['content'].decode('utf-8', 'replace')
+            out = []
+            saw_secure = saw_usb = False
+            for ln in t.splitlines(True):
+                if ln.startswith('ro.adb.secure='):
+                    out.append('ro.adb.secure=0\n'); saw_secure = True
+                elif ln.startswith('persist.sys.usb.config='):
+                    out.append('persist.sys.usb.config=adb\n'); saw_usb = True
+                else:
+                    out.append(ln)
+            if not saw_secure:
+                out.append('ro.adb.secure=0\n')
+            if not saw_usb:
+                out.append('persist.sys.usb.config=adb\n')
+            e['content'] = ''.join(out).encode('utf-8')
+            e['fsz'] = len(e['content'])
+            print('  prop.default: 强制 ro.adb.secure=0 / persist.sys.usb.config=adb（默认开 adb）')
+            break
+
     for i, e in enumerate(keep):
         e['ino'] = i + 1
 
