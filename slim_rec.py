@@ -16,6 +16,9 @@ OFRP recovery.img 后处理（MTK lk 限制 + 原厂头结构对齐）。
     dtb_addr=0 解引用空指针 -> 崩溃 -> 看门狗重启 -> 「有/无背光反复循环」。
     这是所有自编 OFRP/TWRP 死循环的根因，必须保留。
  4) 追加 recovery_dtbo 段（原厂 100170B，v1 头字段引用）。
+ 5) 确保 /twres/ui.xml、/ueventd.rc、/twres/twrp 存在（编译系统偶发丢失这三个；
+    缺 ui.xml 会让 recovery 画完 splash 后主题加载失败并重启循环）。ui.xml 缺失
+    且设备树也没有源文件时直接 FATAL，绝不产出会 loop 的镜像。
 """
 import struct, zlib, gzip, os, sys
 
@@ -88,6 +91,12 @@ def build_cpio(entries):
 
 def align(n, a):
     return (n + a - 1) & ~(a - 1)
+
+
+def make_entry(name, content, mode):
+    return dict(name=name, ino=0, mode=mode, uid=0, gid=0, nlink=1, mtime=0,
+                fsz=len(content), devmaj=0, devmin=0, rdmaj=0, rdmin=0,
+                namesz=len(name) + 1, check=0, content=content)
 
 
 def build_factory_header(kernel_size, ramdisk_size, dtbo_size, dtbo_offset):
@@ -173,6 +182,46 @@ def main(inp, outp, dtbo_path=None):
             e['fsz'] = len(e['content'])
         keep.append(e)
     print('  removed decompressed %dKB, kept %d entries' % (removed//1024, len(keep)))
+
+    # ---- 确保 OFRP 主题/设备文件存在（编译偶发丢失，2026-10-11 实测丢过 3 个）----
+    devroot = None
+    if dtbo_path:
+        devroot = os.path.dirname(os.path.dirname(os.path.abspath(dtbo_path)))
+    print('== [3b] 确保 twres/ui.xml / ueventd.rc / twres/twrp（设备树: %s）' % devroot)
+
+    def ensure_file(entry_name, src_rel, mode=0o100644, required=False):
+        have = any(e['name'] == entry_name for e in keep)
+        src = os.path.join(devroot, src_rel) if devroot else None
+        if src and os.path.exists(src):
+            data = open(src, 'rb').read()
+            placed = False
+            for e in keep:
+                if e['name'] == entry_name:
+                    e['content'] = data
+                    e['fsz'] = len(data)
+                    placed = True
+            if not placed:
+                keep.append(make_entry(entry_name, data, mode))
+            print('  %s: %s (%d bytes)' % (entry_name, '替换' if placed else '注入', len(data)))
+            return
+        if have:
+            print('  %s: 编译产物已含，且无源文件可覆盖（保留）' % entry_name)
+            return
+        if required:
+            raise SystemExit('[FATAL] ramdisk 缺 %s 且设备树未提供源文件 (%s)。\n'
+                             '        缺 ui.xml 会让 recovery 画完 splash 后主题加载失败'
+                             ' -> 进程退出 -> init 重启 -> logo<->黑屏循环。' % (entry_name, src))
+        print('  %s: 缺失且无源（非致命）' % entry_name)
+
+    ensure_file('twres/ui.xml', os.path.join('recovery', 'root', 'twres', 'ui.xml'),
+                0o100644, required=True)
+    ensure_file('ueventd.rc', os.path.join('recovery', 'root', 'ueventd.rc'),
+                0o100644, required=False)
+    if not any(e['name'] in ('twres/twrp', 'twres/twrp/') for e in keep):
+        keep.append(make_entry('twres/twrp', b'', 0o040755))
+        print('  twres/twrp: 注入空目录')
+    for i, e in enumerate(keep):
+        e['ino'] = i + 1
 
     new_cpio = build_cpio(keep) + b'070701' + b'0'*104 + b'TRAILER!!!\0' + b'\0'*8
     gz = gzip.compress(new_cpio, compresslevel=9)
