@@ -174,6 +174,13 @@ jobs:
             rm -f "$DEVICE_PATH/recovery/root/twres/ui.xml"
             rm -f "$DEVICE_PATH/recovery/root/twres/twrp"
             rm -f "$DEVICE_PATH/recovery/root/ueventd.rc"
+            # 中文语言文件: TWRP 用"严格 TWRP 字符串集"(twrp/lang/zh_CN.xml, 710 条)，
+            # 覆盖设备树里 OFRP 那套(876 条, 含 Fox 专有键)。CJK 字体两者共用。
+            if [ -f "$DEVICE_PATH/twrp/lang/zh_CN.xml" ]; then
+              echo "== 用 TWRP 版中文语言覆盖 OFRP 版 =="
+              mkdir -p "$DEVICE_PATH/recovery/root/twres/languages"
+              cp -f "$DEVICE_PATH/twrp/lang/zh_CN.xml" "$DEVICE_PATH/recovery/root/twres/languages/zh_CN.xml"
+            fi
             find "$DEVICE_PATH/recovery/root" -type f | sort || true
 
             # --- 3) 克隆公共设备树（可选）---
