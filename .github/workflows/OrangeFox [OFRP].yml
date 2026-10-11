@@ -78,7 +78,11 @@ jobs:
     - name: 复制 ramdisk 精简脚本到工作区
       run: |
         cp slim_rec.py ${{ steps.pwd.outputs.workspace-folder }}/slim_rec.py
-        ls -la ${{ steps.pwd.outputs.workspace-folder }}/slim_rec.py
+        cp verify_img.py ${{ steps.pwd.outputs.workspace-folder }}/verify_img.py
+        ls -la ${{ steps.pwd.outputs.workspace-folder }}/slim_rec.py ${{ steps.pwd.outputs.workspace-folder }}/verify_img.py
+        # 打印脚本指纹，确保 CI 跑的是最新版（历史上出现过跑了旧版却看不出来的情况）
+        md5sum slim_rec.py verify_img.py
+        echo "slim_rec.py ensure_file 计数（v3 应为 3）: $(grep -c ensure_file slim_rec.py)"
 
     - name: 设置交换空间 (Swap)
       uses: pierotofy/set-swap-space@master
@@ -190,7 +194,17 @@ jobs:
             IMG="/workspace/fox_$MANIFEST_BRANCH/out/target/product/$DEVICE_NAME/recovery.img"
             DTBO="/workspace/fox_$MANIFEST_BRANCH/$DEVICE_PATH/prebuilt/recovery_dtbo.img"
             echo "== dtbo: $DTBO =="
-            test -f "$IMG" && python3 /workspace/slim_rec.py "$IMG" "$IMG.slim" "$DTBO" && mv -f "$IMG.slim" "$IMG"
+            echo "== slim_rec.py 指纹 =="
+            md5sum /workspace/slim_rec.py
+            if [ -f "$IMG" ]; then
+              python3 /workspace/slim_rec.py "$IMG" "$IMG.slim" "$DTBO"
+              mv -f "$IMG.slim" "$IMG"
+              echo "== 出厂前硬校验（失败即中断构建，避免发布会死循环的镜像）=="
+              python3 /workspace/verify_img.py "$IMG"
+            else
+              echo "[FATAL] recovery.img not found: $IMG"
+              exit 1
+            fi
             ls -la "$IMG"
             echo "=== SLIM DONE ==="
           '

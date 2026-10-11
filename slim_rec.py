@@ -93,6 +93,37 @@ def align(n, a):
     return (n + a - 1) & ~(a - 1)
 
 
+def load_ramdisk_cpio(d, ksz, rsz):
+    """提取并完整解压 ramdisk。
+    坑：AOSP/MTK 的 mkbootimg 会把 ramdisk 放在 **页对齐** 偏移；但有些镜像不页对齐。
+    只按 PAGE+ksz 读会在页对齐镜像上偏掉几百字节，导致 gzip 流被截断、尾部条目丢失。
+    这里两种偏移都试，取能完整解压（eof）的那个。"""
+    cands = []
+    for start in {PAGE + ksz, align(PAGE + ksz, PAGE)}:
+        seg = d[start:start + rsz]
+        g = seg.find(b'\x1f\x8b')
+        if g < 0:
+            continue
+        try:
+            obj = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            out = obj.decompress(seg[g:])
+            try:
+                out += obj.flush()
+            except Exception:
+                pass
+        except Exception:
+            continue
+        cands.append((bool(getattr(obj, 'eof', False)), len(out), out, start))
+    if not cands:
+        raise SystemExit('[FATAL] 无法定位 ramdisk gzip 数据')
+    cands.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    eof, n, out, start = cands[0]
+    print('  ramdisk @0x%x decompressed=%d eof=%s' % (start, n, eof))
+    if not eof:
+        raise SystemExit('[FATAL] ramdisk gzip 不完整（读取偏移错误或镜像损坏）')
+    return out
+
+
 def make_entry(name, content, mode):
     return dict(name=name, ino=0, mode=mode, uid=0, gid=0, nlink=1, mtime=0,
                 fsz=len(content), devmaj=0, devmin=0, rdmaj=0, rdmin=0,
@@ -146,20 +177,12 @@ def main(inp, outp, dtbo_path=None):
     ksz, kaddr, rsz, raddr = struct.unpack('<IIII', d[8:24])
     hdr_ver = struct.unpack('<I', d[40:44])[0]
     kernel = d[PAGE:PAGE+ksz]
-    roff = PAGE + ksz
-    rseg = d[roff:roff+rsz]
     print('input: %d bytes  hdr_ver=%d kernel=%d ramdisk=%d' % (len(d), hdr_ver, ksz, rsz))
 
     print('== [1] 校验内核尾部 DTB ==')
     verify_dtb_in_kernel(kernel)
 
-    g = rseg.find(b'\x1f\x8b')
-    obj = zlib.decompressobj(16 + zlib.MAX_WBITS)
-    cpio = obj.decompress(rseg[g:])
-    try:
-        cpio += obj.flush()
-    except Exception:
-        pass
+    cpio = load_ramdisk_cpio(d, ksz, rsz)
     print('== [2] ramdisk: compressed=%d decompressed=%d (%.2fMB)' % (rsz, len(cpio), len(cpio)/1048576))
 
     ents = parse_cpio(cpio)
