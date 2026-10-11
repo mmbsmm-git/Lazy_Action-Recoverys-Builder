@@ -208,10 +208,16 @@ def main(inp, outp, dtbo_path=None):
     print('  removed decompressed %dKB, kept %d entries' % (removed//1024, len(keep)))
 
     # ---- 确保 OFRP 主题/设备文件存在（编译偶发丢失，2026-10-11 实测丢过 3 个）----
+    # 环境变量 SLIM_SKIP_THEME=1 时跳过这些 OFRP 专有的注入（供 TWRP 等其他 recovery 复用本脚本），
+    # 只保留通用部分：ramdisk 精简、内核尾部 DTB 校验、原厂同构头重建、dtbo 段、adb 属性强制。
+    skip_theme = os.environ.get('SLIM_SKIP_THEME', '').lower() in ('1', 'true', 'yes')
     devroot = None
     if dtbo_path:
         devroot = os.path.dirname(os.path.dirname(os.path.abspath(dtbo_path)))
-    print('== [3b] 确保 twres/ui.xml / ueventd.rc / twres/twrp（设备树: %s）' % devroot)
+    if skip_theme:
+        print('== [3b] SLIM_SKIP_THEME=1：跳过 OFRP 主题文件注入（通用模式）')
+    else:
+        print('== [3b] 确保 twres/ui.xml / ueventd.rc / twres/twrp（设备树: %s）' % devroot)
 
     def ensure_file(entry_name, src_rel, mode=0o100644, required=False):
         have = any(e['name'] == entry_name for e in keep)
@@ -250,21 +256,22 @@ def main(inp, outp, dtbo_path=None):
                              ' -> 进程退出 -> init 重启 -> logo<->黑屏循环。' % (entry_name, src))
         print('  %s: 缺失且无源（非致命）' % entry_name)
 
-    ensure_file('twres/ui.xml', os.path.join('recovery', 'root', 'twres', 'ui.xml'),
-                0o100644, required=True)
-    ensure_file('ueventd.rc', os.path.join('recovery', 'root', 'ueventd.rc'),
-                0o100644, required=False)
-    # 中英双语：中文语言文件 + CJK 字体（zh_CN.xml 用 <resource type="fontoverride"
-    # filename="DroidSansFallback.ttf"/> 在切换中文时覆盖字体，故两者必须同时存在）。
-    ensure_file('twres/languages/zh_CN.xml',
-                os.path.join('recovery', 'root', 'twres', 'languages', 'zh_CN.xml'),
-                0o100644, required=False)
-    ensure_file('twres/fonts/DroidSansFallback.ttf',
-                os.path.join('recovery', 'root', 'twres', 'fonts', 'DroidSansFallback.ttf'),
-                0o100644, required=False)
-    if not any(e['name'] in ('twres/twrp', 'twres/twrp/') for e in keep):
-        keep.append(make_entry('twres/twrp', b'', 0o040755))
-        print('  twres/twrp: 注入空目录')
+    if not skip_theme:
+        ensure_file('twres/ui.xml', os.path.join('recovery', 'root', 'twres', 'ui.xml'),
+                    0o100644, required=True)
+        ensure_file('ueventd.rc', os.path.join('recovery', 'root', 'ueventd.rc'),
+                    0o100644, required=False)
+        # 中英双语：中文语言文件 + CJK 字体（zh_CN.xml 用 <resource type="fontoverride"
+        # filename="DroidSansFallback.ttf"/> 在切换中文时覆盖字体，故两者必须同时存在）。
+        ensure_file('twres/languages/zh_CN.xml',
+                    os.path.join('recovery', 'root', 'twres', 'languages', 'zh_CN.xml'),
+                    0o100644, required=False)
+        ensure_file('twres/fonts/DroidSansFallback.ttf',
+                    os.path.join('recovery', 'root', 'twres', 'fonts', 'DroidSansFallback.ttf'),
+                    0o100644, required=False)
+        if not any(e['name'] in ('twres/twrp', 'twres/twrp/') for e in keep):
+            keep.append(make_entry('twres/twrp', b'', 0o040755))
+            print('  twres/twrp: 注入空目录')
 
     # 默认开启 adb：强制 prop.default 里 ro.adb.secure=0(免主机授权) 与
     # persist.sys.usb.config=adb。（adbd 的启动已由设备树 init.recovery.mt6771.rc 保证）

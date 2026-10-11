@@ -1,0 +1,240 @@
+name: TeamWin [TWRP]
+
+# TWRP 编译工作流：与 OrangeFox [OFRP] 流程保持一致
+#   - 复用同一个 GHCR 预构建镜像（AOSP9 全依赖已固化，不重复安装）
+#   - 同一套后处理：slim_rec.py（ramdisk 精简 + 原厂同构 boot 头 + 内核尾部 DTB 校验 + dtbo 段）
+#     与 verify_img.py（出厂硬校验）
+#   - 语言同样只保留 英文 + 中文（en.xml / zh*）
+#   - 差异：TWRP 用 minimal-manifest 的 repo init/sync（非 orangefox_sync.sh）；
+#     slim_rec 以 SLIM_SKIP_THEME=1 运行（不注入 OFRP 专有主题文件，避免与 TWRP 主题冲突）。
+#     verify_img 以 --soft 运行（TWRP 的 twres 结构与 OFRP 不同，缺条目仅告警）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      MANIFEST_URL:
+        description: 'TWRP 最小 manifest 仓库地址'
+        required: true
+        default: 'https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni'
+      MANIFEST_BRANCH:
+        description: '源码分支版本'
+        required: true
+        default: 'twrp-9.0'
+      DEVICE_TREE_URL:
+        description: '设备树仓库地址'
+        required: true
+        default: 'https://github.com/mmbsmm-git/android_device_youxuepai_k71v1_64_bsp'
+      DEVICE_TREE_BRANCH:
+        description: '设备树分支'
+        required: true
+        default: 'main'
+      DEVICE_PATH:
+        description: '设备树路径'
+        required: true
+        default: 'device/youxuepai/k71v1_64_bsp'
+      COMMON_TREE_URL:
+        description: '公共设备树仓库地址（无则留空）'
+        required: false
+        default: ''
+      COMMON_PATH:
+        description: '公共设备树路径（无则留空）'
+        required: false
+        default: ''
+      DEVICE_NAME:
+        description: '设备代号 (Codename)'
+        required: true
+        default: 'k71v1_64_bsp'
+      MAKEFILE_NAME:
+        description: 'Makefile 名称 (lunch)'
+        required: true
+        default: 'omni_k71v1_64_bsp'
+      BUILD_TARGET:
+        description: '构建目标'
+        required: true
+        default: 'recovery'
+
+env:
+  # 与 OrangeFox 工作流共用同一镜像（依赖已固化到 GHCR，只装一次）
+  IMAGE_TAG: orfrp-9-builder:latest
+
+jobs:
+  build:
+    name: 编译 TWRP Recovery
+    if: github.event.repository.owner.id == github.event.sender.id
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write   # needed to push to GHCR
+    steps:
+
+    - name: 显示运行参数
+      run: |
+        echo "::group::参数"
+        echo "MANIFEST_URL   : ${{ github.event.inputs.MANIFEST_URL }}"
+        echo "MANIFEST_BRANCH: ${{ github.event.inputs.MANIFEST_BRANCH }}"
+        echo "DEVICE_TREE_URL: ${{ github.event.inputs.DEVICE_TREE_URL }}"
+        echo "DEVICE_PATH    : ${{ github.event.inputs.DEVICE_PATH }}"
+        echo "DEVICE_NAME    : ${{ github.event.inputs.DEVICE_NAME }}"
+        echo "MAKEFILE_NAME  : ${{ github.event.inputs.MAKEFILE_NAME }}"
+        echo "BUILD_TARGET   : ${{ github.event.inputs.BUILD_TARGET }}.img"
+        echo "::endgroup::"
+
+    - name: 检出仓库 (Check Out)
+      uses: actions/checkout@v4
+
+    - name: 清理环境（保留 Docker）
+      uses: rokibhasansagar/slimhub_actions@main
+      with:
+        # slimhub_actions removes Docker by default; we need it for the container build.
+        retain: "docker_buildkit,docker_imgcache"
+
+    - name: 初始化工作目录
+      run: |
+        mkdir workspace
+        cd workspace
+        echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
+      id: pwd
+
+    - name: 复制脚本到工作区
+      run: |
+        cp slim_rec.py ${{ steps.pwd.outputs.workspace-folder }}/slim_rec.py
+        cp verify_img.py ${{ steps.pwd.outputs.workspace-folder }}/verify_img.py
+        ls -la ${{ steps.pwd.outputs.workspace-folder }}/slim_rec.py ${{ steps.pwd.outputs.workspace-folder }}/verify_img.py
+        md5sum slim_rec.py verify_img.py
+
+    - name: 设置交换空间 (Swap)
+      uses: pierotofy/set-swap-space@master
+      with:
+        swap-size-gb: 12
+
+    # 与 OFRP 工作流相同：镜像已固化在 GHCR -> 直接拉取复用；仅首次运行时构建并推送。
+    - name: 拉取现成镜像（不存在才构建并固化一次）
+      run: |
+        set -e
+        REPO_LOWER=$(echo "${{ github.repository }}" | tr 'A-Z' 'a-z')
+        IMAGE="ghcr.io/${REPO_LOWER}/${IMAGE_TAG}"
+        echo "Using image: $IMAGE"
+        echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+        echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+        export DOCKER_BUILDKIT=1
+        if docker pull "$IMAGE"; then
+          echo "使用 GHCR 现成镜像（依赖已固化，跳过安装）: $IMAGE"
+        else
+          echo "GHCR 暂无镜像，构建并推送（仅首次）..."
+          docker build --cache-from "$IMAGE" -t "$IMAGE" -f Dockerfile .
+          docker push "$IMAGE"
+          echo "镜像已固化到 GHCR: $IMAGE"
+        fi
+
+    # 全部在预构建 20.04 容器内完成：repo init/sync -> 克隆设备树 -> 语言裁剪 -> 编译 -> slim -> 校验
+    - name: 在容器内同步/克隆/编译 (TWRP)
+      run: |
+        set -e
+        WS="${{ steps.pwd.outputs.workspace-folder }}"
+        docker run --rm \
+          -v "$WS:/workspace" \
+          -e MANIFEST_URL="${{ github.event.inputs.MANIFEST_URL }}" \
+          -e MANIFEST_BRANCH="${{ github.event.inputs.MANIFEST_BRANCH }}" \
+          -e DEVICE_TREE_URL="${{ github.event.inputs.DEVICE_TREE_URL }}" \
+          -e DEVICE_TREE_BRANCH="${{ github.event.inputs.DEVICE_TREE_BRANCH }}" \
+          -e DEVICE_PATH="${{ github.event.inputs.DEVICE_PATH }}" \
+          -e COMMON_TREE_URL="${{ github.event.inputs.COMMON_TREE_URL }}" \
+          -e COMMON_PATH="${{ github.event.inputs.COMMON_PATH }}" \
+          -e DEVICE_NAME="${{ github.event.inputs.DEVICE_NAME }}" \
+          -e MAKEFILE_NAME="${{ github.event.inputs.MAKEFILE_NAME }}" \
+          -e BUILD_TARGET="${{ github.event.inputs.BUILD_TARGET }}" \
+          -e SLIM_SKIP_THEME=1 \
+          "$IMAGE" bash -e -c '
+            echo "== Running in pre-built container: $(grep -E "^VERSION_ID" /etc/os-release) =="
+            python2 --version
+            ldconfig -p | grep -E "lib(tinfo|ncurses)5\\.so" | head
+
+            # --- 1) repo init + sync TWRP 最小 manifest（树根 = /workspace）---
+            cd /workspace
+            git config --global user.name "lazy-builder"
+            git config --global user.email "lazy-builder@local"
+            git config --global color.ui false
+            repo init --depth=1 -u "$MANIFEST_URL" -b "$MANIFEST_BRANCH"
+            echo "== repo sync =="
+            repo sync -c --force-sync --no-clone-bundle -j$(nproc --all) || repo sync -c --force-sync --no-clone-bundle -j$(nproc --all)
+
+            # --- 2) 克隆设备树 ---
+            git clone "$DEVICE_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$DEVICE_PATH"
+
+            # --- 3) 克隆公共设备树（可选）---
+            if [ -n "$COMMON_TREE_URL" ] && [ -n "$COMMON_PATH" ]; then
+              git clone "$COMMON_TREE_URL" -b "$DEVICE_TREE_BRANCH" "./$COMMON_PATH"
+            fi
+
+            # --- 3.5) 语言裁剪：仅保留 en + 中文(zh*) ---
+            found=0
+            while IFS= read -r LANG_DIR; do
+              [ -n "$LANG_DIR" ] || continue
+              found=1
+              echo "== Pruning languages dir: $LANG_DIR =="
+              ls "$LANG_DIR"
+              for f in "$LANG_DIR"/*.xml; do
+                [ -e "$f" ] || continue
+                base=$(basename "$f")
+                case "$base" in
+                  en.xml|zh*) : ;;
+                  *) rm -f "$f" ;;
+                esac
+              done
+              echo "== Remaining =="
+              ls "$LANG_DIR"
+            done < <(find /workspace/bootable/recovery -type d -name languages 2>/dev/null)
+            if [ "$found" -eq 0 ]; then
+              echo "WARNING: no languages dir found; skipping restriction"
+            fi
+
+            # --- 4) 编译 recovery ---
+            cd /workspace
+            source build/envsetup.sh
+            export ALLOW_MISSING_DEPENDENCIES=true
+            lunch "${MAKEFILE_NAME}-userdebug" && make clean && mka adbd "${BUILD_TARGET}image" -j$(nproc --all)
+            echo "=== BUILD FINISHED ==="
+            ls -la "/workspace/out/target/product/$DEVICE_NAME/" 2>/dev/null || true
+
+            # --- 5) ramdisk 精简 + 原厂同构头 + 内核尾部 DTB 校验 + dtbo 段 ---
+            #     注意：本块整体被单引号包裹，内部不能出现单引号。
+            echo "== Slim ramdisk + rebuild factory-exact boot header (MTK lk) =="
+            command -v python3 >/dev/null || (apt-get update && apt-get install -y python3)
+            IMG="/workspace/out/target/product/$DEVICE_NAME/${BUILD_TARGET}.img"
+            DTBO="/workspace/$DEVICE_PATH/prebuilt/recovery_dtbo.img"
+            echo "== dtbo: $DTBO =="
+            if [ -f "$IMG" ]; then
+              python3 /workspace/slim_rec.py "$IMG" "$IMG.slim" "$DTBO"
+              mv -f "$IMG.slim" "$IMG"
+              echo "== 出厂前硬校验（soft：TWRP 主题结构与 OFRP 不同）=="
+              python3 /workspace/verify_img.py "$IMG" --soft
+            else
+              echo "[FATAL] target image not found: $IMG"
+              exit 1
+            fi
+            ls -la "$IMG"
+            echo "=== SLIM DONE ==="
+          '
+
+    - name: 检查输出目录（上传前）
+      run: |
+        ls -al ${{ steps.pwd.outputs.workspace-folder }}/out/target/product/
+        echo
+        ls -al ${{ steps.pwd.outputs.workspace-folder }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/
+
+    - name: 上传到 Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          ${{ steps.pwd.outputs.workspace-folder }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/*.img
+          ${{ steps.pwd.outputs.workspace-folder }}/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/*.zip
+        name: TWRP-${{ github.event.inputs.DEVICE_NAME }}-${{ github.run_id }}
+        tag_name: twrp-${{ github.run_id }}
+        body: |
+          Manifest: ${{ github.event.inputs.MANIFEST_BRANCH }}
+          Device: ${{ github.event.inputs.DEVICE_NAME }}
+          Target: ${{ github.event.inputs.BUILD_TARGET }}.img
+          TREE: [Device Tree/Branch](${{ github.event.inputs.DEVICE_TREE_URL }}/tree/${{ github.event.inputs.DEVICE_TREE_BRANCH }})
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

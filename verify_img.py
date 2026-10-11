@@ -56,7 +56,7 @@ def load_cpio(d, ks, rs):
         fails.append('ramdisk gzip 不完整（读取偏移或镜像损坏）')
     return out
 
-def main(p):
+def main(p, soft=False):
     d = open(p, 'rb').read()
     print('== verify_img: %s (%d bytes, %.2fMB) ==' % (p, len(d), len(d)/1048576))
     ok(d[:8] == b'ANDROID!', 'magic ANDROID!')
@@ -100,7 +100,10 @@ def main(p):
             break
     print('  ramdisk entries=%d' % len(names))
     for c in CRITICAL:
-        ok(c in names, 'ramdisk 含 %s' % c)
+        if soft and c not in names:
+            print('  [WARN] ramdisk 缺 %s (soft 模式不计失败)' % c)
+        else:
+            ok(c in names, 'ramdisk 含 %s' % c)
 
     print('== RESULT: %s ==' % ('PASS' if not fails else 'FAIL (%d)' % len(fails)))
     if fails:
@@ -110,6 +113,7 @@ def main(p):
         sys.exit(1)
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
+    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    if not args:
         print(__doc__); sys.exit(2)
-    main(sys.argv[1])
+    main(args[0], soft=('--soft' in sys.argv))
