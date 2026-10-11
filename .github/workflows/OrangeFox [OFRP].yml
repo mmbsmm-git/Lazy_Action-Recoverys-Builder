@@ -203,6 +203,15 @@ jobs:
               mv -f "$IMG.slim" "$IMG"
               echo "== 出厂前硬校验（失败即中断构建，避免发布会死循环的镜像）=="
               python3 /workspace/verify_img.py "$IMG"
+              # 关键：编译系统还会吐一个名字好看的原始副本(OrangeFox-Unofficial-*.img)，
+              # 它没有经过 slim_rec -> ramdisk 超 16MB、头字段错误、刷了必死循环。
+              # 这里用"已修复的 recovery.img"覆盖它，避免用户刷错文件。
+              for f in "/workspace/fox_$MANIFEST_BRANCH/out/target/product/$DEVICE_NAME"/OrangeFox-Unofficial-*.img; do
+                [ -e "$f" ] || continue
+                echo "== 用已修复镜像覆盖原始名副本: $f =="
+                cp -f "$IMG" "$f"
+                ls -la "$f"
+              done
             else
               echo "[FATAL] recovery.img not found: $IMG"
               exit 1
