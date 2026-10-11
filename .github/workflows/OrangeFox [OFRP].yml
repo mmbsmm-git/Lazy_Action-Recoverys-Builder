@@ -185,10 +185,12 @@ jobs:
             #      the whole script is wrapped in a single-quoted bash string,
             #      so a single quote would break it. slim_rec.py prints its own
             #      result lines, so no extra python3 -c needed.
-            echo "== Slimming ramdisk (MTK lk hard-limit: ramdisk_size <=16MB) =="
+            echo "== Slim ramdisk + rebuild factory-exact boot header (MTK lk) =="
             command -v python3 >/dev/null || (apt-get update && apt-get install -y python3)
             IMG="/workspace/fox_$MANIFEST_BRANCH/out/target/product/$DEVICE_NAME/recovery.img"
-            test -f "$IMG" && python3 /workspace/slim_rec.py "$IMG" "$IMG.slim" && mv -f "$IMG.slim" "$IMG"
+            DTBO="/workspace/fox_$MANIFEST_BRANCH/$DEVICE_PATH/prebuilt/recovery_dtbo.img"
+            echo "== dtbo: $DTBO =="
+            test -f "$IMG" && python3 /workspace/slim_rec.py "$IMG" "$IMG.slim" "$DTBO" && mv -f "$IMG.slim" "$IMG"
             ls -la "$IMG"
             echo "=== SLIM DONE ==="
           '
